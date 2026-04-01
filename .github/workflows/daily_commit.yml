@@ -1,3 +1,6 @@
+# PRs: no GitHub, em Settings → Actions → General → Workflow permissions,
+# ative "Read and write" e marque "Allow GitHub Actions to create and approve pull requests".
+# Se a org nao permitir, crie o secret GH_PAT (PAT classico com scope "repo") neste repositorio.
 name: Daily Code Pull Requests
 
 on:
@@ -20,7 +23,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Configurar Python
         uses: actions/setup-python@v5
@@ -37,7 +40,7 @@ jobs:
 
       - name: Abrir PRs e mesclar na main (um por snippet)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: |
           set -e
           DATE=$(date +%Y-%m-%d)
