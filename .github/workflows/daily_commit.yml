@@ -5,6 +5,9 @@ on:
     - cron: "0 12 * * *"
   workflow_dispatch:
 
+env:
+  COMMITS_PER_DAY: "7"
+
 jobs:
   daily-commit:
     runs-on: ubuntu-latest
@@ -28,24 +31,45 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Gerar arquivo do dia
+      - name: Gerar arquivos do dia
         run: python generate_daily.py
 
-      - name: Commit e push
+      - name: Commit e push (varios commits por dia)
         run: |
+          set -e
           DATE=$(date +%Y-%m-%d)
-          git add daily/
-          git diff --staged --quiet && echo "Nada a commitar hoje." && exit 0
-          git commit -m "daily: snippet do dia $DATE"
+          DATE_US=$(date +%Y_%m_%d)
+          N=${COMMITS_PER_DAY:-7}
+          ANY=0
+          for i in $(seq 1 "$N"); do
+            idx=$(printf '%03d' "$i")
+            f="daily/${DATE_US}_${idx}.py"
+            if [ ! -f "$f" ]; then
+              echo "Arquivo esperado ausente: $f"
+              exit 1
+            fi
+            git add "$f"
+            if git diff --staged --quiet; then
+              echo "Sem mudancas em $f (ja commitado?)"
+              continue
+            fi
+            git commit -m "daily: snippet do dia $DATE (#$i/$N)"
+            ANY=1
+          done
+          if [ "$ANY" -eq 0 ]; then
+            echo "Nada a commitar hoje."
+            exit 0
+          fi
           git push origin main
 
       - name: Resumo da execucao
         if: always()
         run: |
           DATE=$(date +%Y-%m-%d)
-          echo "## Daily Commit - $DATE" >> $GITHUB_STEP_SUMMARY
-          if git log --oneline -1 | grep -q "$DATE"; then
-            echo "Commit realizado com sucesso!" >> $GITHUB_STEP_SUMMARY
+          echo "## Daily Commit - $DATE (${COMMITS_PER_DAY} commits)" >> $GITHUB_STEP_SUMMARY
+          N=${COMMITS_PER_DAY:-7}
+          if git log --oneline -"$N" | grep -q "$DATE"; then
+            echo "Commits do dia registrados no log recente." >> $GITHUB_STEP_SUMMARY
           else
-            echo "Nenhum commit novo hoje." >> $GITHUB_STEP_SUMMARY
+            echo "Nenhum commit novo detectado no resumo." >> $GITHUB_STEP_SUMMARY
           fi
