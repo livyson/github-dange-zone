@@ -1,4 +1,4 @@
-name: Daily Code Commit
+name: Daily Code Pull Requests
 
 on:
   schedule:
@@ -9,10 +9,11 @@ env:
   COMMITS_PER_DAY: "7"
 
 jobs:
-  daily-commit:
+  daily-prs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout repositorio
@@ -34,12 +35,15 @@ jobs:
       - name: Gerar arquivos do dia
         run: python generate_daily.py
 
-      - name: Commit e push (varios commits por dia)
+      - name: Abrir PRs e mesclar na main (um por snippet)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           DATE=$(date +%Y-%m-%d)
           DATE_US=$(date +%Y_%m_%d)
           N=${COMMITS_PER_DAY:-7}
+          RID=${GITHUB_RUN_ID}
           ANY=0
           for i in $(seq 1 "$N"); do
             idx=$(printf '%03d' "$i")
@@ -48,28 +52,39 @@ jobs:
               echo "Arquivo esperado ausente: $f"
               exit 1
             fi
+            git fetch origin main 2>/dev/null || true
+            git checkout main
+            git pull origin main --rebase=false || true
+            BRANCH="daily/pr-${DATE_US}-${idx}-${RID}"
+            git checkout -b "$BRANCH"
             git add "$f"
             if git diff --staged --quiet; then
-              echo "Sem mudancas em $f (ja commitado?)"
+              echo "Sem alteracoes em $f em relacao a main — pulando PR."
+              git checkout main
+              git branch -D "$BRANCH" 2>/dev/null || true
               continue
             fi
             git commit -m "daily: snippet do dia $DATE (#$i/$N)"
+            git push -u origin "$BRANCH"
+            PR_NUM=$(gh pr create --base main --head "$BRANCH" \
+              --title "daily: snippet ${DATE} (#${i}/${N})" \
+              --body "Snippet automático do dia \`${DATE}\` (parte ${i} de ${N})." \
+              --json number -q .number)
+            echo "PR #${PR_NUM} criado; mesclando na main..."
+            gh pr merge "$PR_NUM" --merge --delete-branch
             ANY=1
+            git checkout main
+            git pull origin main --rebase=false || true
+            git branch -D "$BRANCH" 2>/dev/null || true
           done
           if [ "$ANY" -eq 0 ]; then
-            echo "Nada a commitar hoje."
-            exit 0
+            echo "Nenhum pull request novo (arquivos já iguais à main ou já processados)."
           fi
-          git push origin main
 
       - name: Resumo da execucao
         if: always()
         run: |
           DATE=$(date +%Y-%m-%d)
-          echo "## Daily Commit - $DATE (${COMMITS_PER_DAY} commits)" >> $GITHUB_STEP_SUMMARY
-          N=${COMMITS_PER_DAY:-7}
-          if git log --oneline -"$N" | grep -q "$DATE"; then
-            echo "Commits do dia registrados no log recente." >> $GITHUB_STEP_SUMMARY
-          else
-            echo "Nenhum commit novo detectado no resumo." >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "## Daily PRs — ${DATE} (até ${COMMITS_PER_DAY}, criados e mesclados em \`main\`)" >> $GITHUB_STEP_SUMMARY
+          echo "Cada PR foi aberto e mesclado com merge commit; branches remotos removidos quando aplicável." >> $GITHUB_STEP_SUMMARY
+          echo "Histórico: https://github.com/${GITHUB_REPOSITORY}/commits/main" >> $GITHUB_STEP_SUMMARY
