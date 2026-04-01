@@ -1,1 +1,51 @@
-- cron: "0 12 * * *"  # 12:00 UTC = 09:00 BRT
+name: Daily Code Commit
+
+on:
+  schedule:
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+
+jobs:
+  daily-commit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Configurar identidade Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Gerar arquivo do dia
+        run: python generate_daily.py
+
+      - name: Commit e push
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          git add daily/
+          git diff --staged --quiet && echo "Nada a commitar hoje." && exit 0
+          git commit -m "daily: snippet do dia $DATE"
+          git push origin main
+
+      - name: Resumo da execucao
+        if: always()
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          echo "## Daily Commit - $DATE" >> $GITHUB_STEP_SUMMARY
+          if git log --oneline -1 | grep -q "$DATE"; then
+            echo "Commit realizado com sucesso!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Nenhum commit novo hoje." >> $GITHUB_STEP_SUMMARY
+          fi
