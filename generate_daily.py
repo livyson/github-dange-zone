@@ -40,6 +40,16 @@ def square(n):
 ]
 
 
+def _ci_footer() -> str:
+    """No Actions, garante diff vs. main quando o ficheiro já existia igual ao snippet."""
+    rid = os.environ.get("GITHUB_RUN_ID")
+    if not rid:
+        return ""
+    sha = os.environ.get("GITHUB_SHA", "")[:7]
+    extra = f" sha={sha}" if sha else ""
+    return f"\n\n# ci: workflow_run={rid}{extra}\n"
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Gera arquivos daily/YYYY_MM_DD_NNN.py")
     p.add_argument(
@@ -59,7 +69,7 @@ def main() -> None:
     for i in range(1, args.count + 1):
         idx = f"{i:03d}"
         path = os.path.join("daily", f"{prefix}_{idx}.py")
-        body = SNIPPETS[(i - 1) % len(SNIPPETS)]
+        body = SNIPPETS[(i - 1) % len(SNIPPETS)] + _ci_footer()
         with open(path, "w", encoding="utf-8") as f:
             f.write(body)
 
