@@ -68,12 +68,17 @@ jobs:
             fi
             git commit -m "daily: snippet do dia $DATE (#$i/$N)"
             git push -u origin "$BRANCH"
-            PR_NUM=$(gh pr create --base main --head "$BRANCH" \
+            # gh pr create em versoes antigas nao suporta --json; a saida e a URL do PR
+            PR_URL=$(gh pr create --base main --head "$BRANCH" \
               --title "daily: snippet ${DATE} (#${i}/${N})" \
-              --body "Snippet automático do dia \`${DATE}\` (parte ${i} de ${N})." \
-              --json number -q .number)
-            echo "OK [$i/$N] PR #${PR_NUM} criado; mesclando na main..."
-            gh pr merge "$PR_NUM" --merge --delete-branch
+              --body "Snippet automático do dia \`${DATE}\` (parte ${i} de ${N}).")
+            PR_URL=$(echo "$PR_URL" | grep -Eo 'https://github\.com/[^ ]+/pull/[0-9]+' | head -1)
+            if [ -z "$PR_URL" ]; then
+              echo "::error::gh pr create nao devolveu URL de PR (saida inesperada)."
+              exit 1
+            fi
+            echo "OK [$i/$N] PR criado: $PR_URL — mesclando na main..."
+            gh pr merge "$PR_URL" --merge --delete-branch
             CREATED=$((CREATED + 1))
             git checkout main
             git pull origin main --rebase=false || true
