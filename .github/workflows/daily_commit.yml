@@ -44,7 +44,8 @@ jobs:
           DATE_US=$(date +%Y_%m_%d)
           N=${COMMITS_PER_DAY:-7}
           RID=${GITHUB_RUN_ID}
-          ANY=0
+          CREATED=0
+          SKIPPED=0
           for i in $(seq 1 "$N"); do
             idx=$(printf '%03d' "$i")
             f="daily/${DATE_US}_${idx}.py"
@@ -59,7 +60,8 @@ jobs:
             git checkout -b "$BRANCH"
             git add "$f"
             if git diff --staged --quiet; then
-              echo "Sem alteracoes em $f em relacao a main — pulando PR."
+              echo "SKIP [$i/$N] $f — sem diff em relacao a main (nao abre PR)."
+              SKIPPED=$((SKIPPED + 1))
               git checkout main
               git branch -D "$BRANCH" 2>/dev/null || true
               continue
@@ -70,21 +72,32 @@ jobs:
               --title "daily: snippet ${DATE} (#${i}/${N})" \
               --body "Snippet automático do dia \`${DATE}\` (parte ${i} de ${N})." \
               --json number -q .number)
-            echo "PR #${PR_NUM} criado; mesclando na main..."
+            echo "OK [$i/$N] PR #${PR_NUM} criado; mesclando na main..."
             gh pr merge "$PR_NUM" --merge --delete-branch
-            ANY=1
+            CREATED=$((CREATED + 1))
             git checkout main
             git pull origin main --rebase=false || true
             git branch -D "$BRANCH" 2>/dev/null || true
           done
-          if [ "$ANY" -eq 0 ]; then
-            echo "Nenhum pull request novo (arquivos já iguais à main ou já processados)."
+          echo "PRS_CREATED=$CREATED" >> "$GITHUB_ENV"
+          echo "PRS_SKIPPED=$SKIPPED" >> "$GITHUB_ENV"
+          echo "---- Resumo: PRs mesclados=$CREATED | slots pulados=$SKIPPED (ja iguais a main) ----"
+          if [ "$CREATED" -eq 0 ] && [ "$SKIPPED" -gt 0 ]; then
+            echo "::warning::Nenhum PR foi aberto: os $SKIPPED arquivo(s) do dia ja estavam na main com o mesmo conteudo. A aba Pull requests so mostra PRs que chegaram a ser criados."
           fi
 
       - name: Resumo da execucao
         if: always()
         run: |
           DATE=$(date +%Y-%m-%d)
-          echo "## Daily PRs — ${DATE} (até ${COMMITS_PER_DAY}, criados e mesclados em \`main\`)" >> $GITHUB_STEP_SUMMARY
-          echo "Cada PR foi aberto e mesclado com merge commit; branches remotos removidos quando aplicável." >> $GITHUB_STEP_SUMMARY
-          echo "Histórico: https://github.com/${GITHUB_REPOSITORY}/commits/main" >> $GITHUB_STEP_SUMMARY
+          C="${PRS_CREATED:-—}"
+          S="${PRS_SKIPPED:-—}"
+          echo "## Daily PRs — ${DATE}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Métrica | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| PRs criados e mesclados | **${C}** |" >> $GITHUB_STEP_SUMMARY
+          echo "| Slots ignorados (sem diff vs \`main\`) | **${S}** |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Se **PRs mesclados = 0** e **ignorados = 7**, o job correu mas nada mudou em relação à \`main\` — por isso não há PRs na lista." >> $GITHUB_STEP_SUMMARY
+          echo "Commits na \`main\`: https://github.com/${GITHUB_REPOSITORY}/commits/main" >> $GITHUB_STEP_SUMMARY
