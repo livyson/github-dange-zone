@@ -1,7 +1,6 @@
-# PRs: no GitHub, em Settings → Actions → General → Workflow permissions,
-# ative "Read and write" e marque "Allow GitHub Actions to create and approve pull requests".
-# Se a org nao permitir, crie o secret GH_PAT (PAT classico com scope "repo") neste repositorio.
-name: Daily Code Pull Requests
+# Commits diretos na main (sem PRs): o GITHUB_TOKEN padrao pode fazer push;
+# criar PRs exige permissao extra no repo ou PAT — evitamos isso aqui.
+name: Daily Code Commits
 
 on:
   schedule:
@@ -12,18 +11,17 @@ env:
   COMMITS_PER_DAY: "7"
 
 jobs:
-  daily-prs:
+  daily-commits:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
 
     steps:
       - name: Checkout repositorio
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configurar Python
         uses: actions/setup-python@v5
@@ -38,16 +36,13 @@ jobs:
       - name: Gerar arquivos do dia
         run: python generate_daily.py
 
-      - name: Abrir PRs e mesclar na main (um por snippet)
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+      - name: Commit e push na main (um commit por snippet)
         run: |
           set -e
           DATE=$(date +%Y-%m-%d)
           DATE_US=$(date +%Y_%m_%d)
           N=${COMMITS_PER_DAY:-7}
-          RID=${GITHUB_RUN_ID}
-          CREATED=0
+          COMMITS=0
           SKIPPED=0
           for i in $(seq 1 "$N"); do
             idx=$(printf '%03d' "$i")
@@ -59,53 +54,34 @@ jobs:
             git fetch origin main 2>/dev/null || true
             git checkout main
             git pull origin main --rebase=false || true
-            BRANCH="daily/pr-${DATE_US}-${idx}-${RID}"
-            git checkout -b "$BRANCH"
             git add "$f"
             if git diff --staged --quiet; then
-              echo "SKIP [$i/$N] $f — sem diff em relacao a main (nao abre PR)."
+              echo "SKIP [$i/$N] $f — sem diff em relacao a main."
               SKIPPED=$((SKIPPED + 1))
-              git checkout main
-              git branch -D "$BRANCH" 2>/dev/null || true
               continue
             fi
             git commit -m "daily: snippet do dia $DATE (#$i/$N)"
-            git push -u origin "$BRANCH"
-            # gh pr create em versoes antigas nao suporta --json; a saida e a URL do PR
-            PR_URL=$(gh pr create --base main --head "$BRANCH" \
-              --title "daily: snippet ${DATE} (#${i}/${N})" \
-              --body "Snippet automático do dia \`${DATE}\` (parte ${i} de ${N}).")
-            PR_URL=$(echo "$PR_URL" | grep -Eo 'https://github\.com/[^ ]+/pull/[0-9]+' | head -1)
-            if [ -z "$PR_URL" ]; then
-              echo "::error::gh pr create nao devolveu URL de PR (saida inesperada)."
-              exit 1
-            fi
-            echo "OK [$i/$N] PR criado: $PR_URL — mesclando na main..."
-            gh pr merge "$PR_URL" --merge --delete-branch
-            CREATED=$((CREATED + 1))
-            git checkout main
-            git pull origin main --rebase=false || true
-            git branch -D "$BRANCH" 2>/dev/null || true
+            git push origin main
+            COMMITS=$((COMMITS + 1))
           done
-          echo "PRS_CREATED=$CREATED" >> "$GITHUB_ENV"
-          echo "PRS_SKIPPED=$SKIPPED" >> "$GITHUB_ENV"
-          echo "---- Resumo: PRs mesclados=$CREATED | slots pulados=$SKIPPED (ja iguais a main) ----"
-          if [ "$CREATED" -eq 0 ] && [ "$SKIPPED" -gt 0 ]; then
-            echo "::warning::Nenhum PR foi aberto: os $SKIPPED arquivo(s) do dia ja estavam na main com o mesmo conteudo. A aba Pull requests so mostra PRs que chegaram a ser criados."
+          echo "COMMITS_PUSHED=$COMMITS" >> "$GITHUB_ENV"
+          echo "SLOTS_SKIPPED=$SKIPPED" >> "$GITHUB_ENV"
+          echo "---- Resumo: commits na main=$COMMITS | slots pulados=$SKIPPED ----"
+          if [ "$COMMITS" -eq 0 ] && [ "$SKIPPED" -gt 0 ]; then
+            echo "::warning::Nenhum commit novo: os $SKIPPED arquivo(s) ja coincidem com a main."
           fi
 
       - name: Resumo da execucao
         if: always()
         run: |
           DATE=$(date +%Y-%m-%d)
-          C="${PRS_CREATED:-—}"
-          S="${PRS_SKIPPED:-—}"
-          echo "## Daily PRs — ${DATE}" >> $GITHUB_STEP_SUMMARY
+          C="${COMMITS_PUSHED:-—}"
+          S="${SLOTS_SKIPPED:-—}"
+          echo "## Daily commits — ${DATE}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Métrica | Valor |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| PRs criados e mesclados | **${C}** |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commits enviados para \`main\` | **${C}** |" >> $GITHUB_STEP_SUMMARY
           echo "| Slots ignorados (sem diff vs \`main\`) | **${S}** |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Se **PRs mesclados = 0** e **ignorados = 7**, o job correu mas nada mudou em relação à \`main\` — por isso não há PRs na lista." >> $GITHUB_STEP_SUMMARY
-          echo "Commits na \`main\`: https://github.com/${GITHUB_REPOSITORY}/commits/main" >> $GITHUB_STEP_SUMMARY
+          echo "Historico: https://github.com/${GITHUB_REPOSITORY}/commits/main" >> $GITHUB_STEP_SUMMARY
