@@ -4,7 +4,8 @@ name: Daily Code Commits
 
 on:
   schedule:
-    - cron: "0 12 * * *"
+    # 08:00 em Brasília (UTC-3) → 11:00 UTC (GitHub usa só UTC)
+    - cron: "0 11 * * *"
   workflow_dispatch:
 
 env:
