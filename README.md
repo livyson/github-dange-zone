@@ -1,2 +1,2 @@
-# github-auto-commits
-Projeto para commits diários
+# github-dange-zone
+Projeto Dange Zone
