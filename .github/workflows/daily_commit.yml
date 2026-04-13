@@ -4,9 +4,22 @@ name: Daily Code Commits
 
 on:
   schedule:
-    # 08:00 em Brasília (UTC-3) → 11:00 UTC (GitHub usa só UTC)
-    - cron: "0 11 * * *"
+    # Manhã/tarde/noite em Brasília (UTC-3): GitHub Agenda só em UTC
+    - cron: "0 11 * * *" # 08:00 BRT — manhã (slots 1–3)
+    - cron: "0 17 * * *" # 14:00 BRT — tarde (slots 4–6)
+    - cron: "0 23 * * *" # 20:00 BRT — noite (slot 7)
   workflow_dispatch:
+    inputs:
+      slot:
+        description: "Período a gerar; auto = inferir pela hora UTC (agendamento) ou manhã se ambíguo"
+        required: false
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - morning
+          - afternoon
+          - evening
 
 env:
   COMMITS_PER_DAY: "7"
@@ -34,18 +47,49 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Definir período (manhã / tarde / noite)
+        run: |
+          set -e
+          MANUAL="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.slot || 'auto' }}"
+          if [ "$MANUAL" != "auto" ]; then
+            echo "COMMIT_SLOT=$MANUAL" >> "$GITHUB_ENV"
+            echo "Período (manual): $MANUAL"
+            exit 0
+          fi
+          HOUR=$(date -u +%H)
+          case "$HOUR" in
+            11) SLOT=morning ;;
+            17) SLOT=afternoon ;;
+            23) SLOT=evening ;;
+            *)
+              echo "::warning::Hora UTC $HOUR sem mapeamento; a usar manhã (morning)."
+              SLOT=morning
+              ;;
+          esac
+          echo "COMMIT_SLOT=$SLOT" >> "$GITHUB_ENV"
+          echo "Período (UTC ${HOUR}): $SLOT"
+
       - name: Gerar arquivos do dia
-        run: python generate_daily.py
+        run: python generate_daily.py --slot "$COMMIT_SLOT"
 
       - name: Commit e push na main (um commit por snippet)
         run: |
           set -e
           DATE=$(date +%Y-%m-%d)
           DATE_US=$(date +%Y_%m_%d)
-          N=${COMMITS_PER_DAY:-7}
+          case "${COMMIT_SLOT}" in
+            morning) INDICES="1 2 3" ;;
+            afternoon) INDICES="4 5 6" ;;
+            evening) INDICES="7" ;;
+            *)
+              echo "COMMIT_SLOT inválido: ${COMMIT_SLOT:-vazio}"
+              exit 1
+              ;;
+          esac
+          TOTAL_DAY=${COMMITS_PER_DAY:-7}
           COMMITS=0
           SKIPPED=0
-          for i in $(seq 1 "$N"); do
+          for i in $INDICES; do
             idx=$(printf '%03d' "$i")
             f="daily/${DATE_US}_${idx}.py"
             if [ ! -f "$f" ]; then
@@ -57,11 +101,11 @@ jobs:
             git pull origin main --rebase=false || true
             git add "$f"
             if git diff --staged --quiet; then
-              echo "SKIP [$i/$N] $f — sem diff em relacao a main."
+              echo "SKIP [$i/$TOTAL_DAY] $f — sem diff em relacao a main."
               SKIPPED=$((SKIPPED + 1))
               continue
             fi
-            git commit -m "daily: snippet do dia $DATE (#$i/$N)"
+            git commit -m "daily: snippet do dia $DATE (#$i/$TOTAL_DAY, ${COMMIT_SLOT})"
             git push origin main
             COMMITS=$((COMMITS + 1))
           done
@@ -78,10 +122,12 @@ jobs:
           DATE=$(date +%Y-%m-%d)
           C="${COMMITS_PUSHED:-—}"
           S="${SLOTS_SKIPPED:-—}"
-          echo "## Daily commits — ${DATE}" >> $GITHUB_STEP_SUMMARY
+          SLOT="${COMMIT_SLOT:-—}"
+          echo "## Daily commits — ${DATE} (${SLOT})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Métrica | Valor |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Período | **${SLOT}** |" >> $GITHUB_STEP_SUMMARY
           echo "| Commits enviados para \`main\` | **${C}** |" >> $GITHUB_STEP_SUMMARY
           echo "| Slots ignorados (sem diff vs \`main\`) | **${S}** |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
