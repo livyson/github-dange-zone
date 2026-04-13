@@ -3,4 +3,4 @@ def square(n):
     return n * n
 
 
-# ci: workflow_run=24342403530 sha=dc5ed66
+# ci: workflow_run=24372664901 sha=444bfc2
