@@ -1,5 +1,7 @@
-# Commits diretos na main (sem PRs): o GITHUB_TOKEN padrao pode fazer push;
-# criar PRs exige permissao extra no repo ou PAT — evitamos isso aqui.
+# 10 commits/dia (manhã 1–3, tarde 4–6, noite 7–10), 3 execuções agendadas.
+# Cada execução: ramo → commits → PR → merge em main (fecha o PR).
+# Requer permissões de workflow para PRs; em repos protegidos pode ser preciso
+# permitir que GitHub Actions abra/funda PRs ou usar bypass nas regras da branch.
 name: Daily Code Commits
 
 on:
@@ -7,7 +9,7 @@ on:
     # Manhã/tarde/noite em Brasília (UTC-3): GitHub Agenda só em UTC
     - cron: "0 11 * * *" # 08:00 BRT — manhã (slots 1–3)
     - cron: "0 17 * * *" # 14:00 BRT — tarde (slots 4–6)
-    - cron: "0 23 * * *" # 20:00 BRT — noite (slot 7)
+    - cron: "0 23 * * *" # 20:00 BRT — noite (slots 7–10)
   workflow_dispatch:
     inputs:
       slot:
@@ -22,13 +24,21 @@ on:
           - evening
 
 env:
-  COMMITS_PER_DAY: "7"
+  COMMITS_PER_DAY: "10"
 
 jobs:
   daily-commits:
     runs-on: ubuntu-latest
+    # Evita dois runs a fundirem em paralelo e a criarem conflitos na mesma base.
+    concurrency:
+      group: daily-commits-${{ github.workflow }}-${{ github.ref_name }}
+      cancel-in-progress: false
     permissions:
       contents: write
+      pull-requests: write
+    env:
+      # Agendado: ref por defeito do repo; dispatch: branch escolhida na UI.
+      BASE_BRANCH: ${{ github.ref_name }}
 
     steps:
       - name: Checkout repositorio
@@ -69,24 +79,40 @@ jobs:
           echo "COMMIT_SLOT=$SLOT" >> "$GITHUB_ENV"
           echo "Período (UTC ${HOUR}): $SLOT"
 
+      - name: Atualizar base e criar ramo do PR
+        run: |
+          set -e
+          DATE_US=$(date +%Y_%m_%d)
+          git fetch origin "$BASE_BRANCH"
+          git checkout "$BASE_BRANCH"
+          git pull origin "$BASE_BRANCH" --rebase=false || true
+          BRANCH="bot/daily-${DATE_US}-${COMMIT_SLOT}-${{ github.run_id }}"
+          git checkout -b "$BRANCH"
+          echo "PR_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+          echo "Ramo do PR: $BRANCH (base: $BASE_BRANCH)"
+
       - name: Gerar arquivos do dia
         run: python generate_daily.py --slot "$COMMIT_SLOT"
 
-      - name: Commit e push na main (um commit por snippet)
+      - name: Commits no ramo, PR e merge em main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_PROMPT_DISABLED: "1"
         run: |
           set -e
           DATE=$(date +%Y-%m-%d)
           DATE_US=$(date +%Y_%m_%d)
+          BRANCH="${PR_BRANCH}"
           case "${COMMIT_SLOT}" in
             morning) INDICES="1 2 3" ;;
             afternoon) INDICES="4 5 6" ;;
-            evening) INDICES="7" ;;
+            evening) INDICES="7 8 9 10" ;;
             *)
               echo "COMMIT_SLOT inválido: ${COMMIT_SLOT:-vazio}"
               exit 1
               ;;
           esac
-          TOTAL_DAY=${COMMITS_PER_DAY:-7}
+          TOTAL_DAY=${COMMITS_PER_DAY:-10}
           COMMITS=0
           SKIPPED=0
           for i in $INDICES; do
@@ -96,24 +122,36 @@ jobs:
               echo "Arquivo esperado ausente: $f"
               exit 1
             fi
-            git fetch origin main 2>/dev/null || true
-            git checkout main
-            git pull origin main --rebase=false || true
             git add "$f"
             if git diff --staged --quiet; then
-              echo "SKIP [$i/$TOTAL_DAY] $f — sem diff em relacao a main."
+              echo "SKIP [$i/$TOTAL_DAY] $f — sem alterações em relação ao ramo atual."
               SKIPPED=$((SKIPPED + 1))
               continue
             fi
             git commit -m "daily: snippet do dia $DATE (#$i/$TOTAL_DAY, ${COMMIT_SLOT})"
-            git push origin main
             COMMITS=$((COMMITS + 1))
           done
           echo "COMMITS_PUSHED=$COMMITS" >> "$GITHUB_ENV"
           echo "SLOTS_SKIPPED=$SKIPPED" >> "$GITHUB_ENV"
-          echo "---- Resumo: commits na main=$COMMITS | slots pulados=$SKIPPED ----"
-          if [ "$COMMITS" -eq 0 ] && [ "$SKIPPED" -gt 0 ]; then
-            echo "::warning::Nenhum commit novo: os $SKIPPED arquivo(s) ja coincidem com a main."
+          echo "---- Resumo: commits no ramo=$COMMITS | slots pulados=$SKIPPED ----"
+          if [ "$COMMITS" -eq 0 ]; then
+            echo "::warning::Nenhum commit novo; não abre PR."
+            exit 0
+          fi
+          git push -u origin "$BRANCH"
+          TITLE="daily: ${DATE} (${COMMIT_SLOT}, commits $(echo $INDICES | tr ' ' ','))"
+          BODY="Commits automáticos **#${TOTAL_DAY}** do dia (${COMMIT_SLOT}). Fecha após merge em \`${BASE_BRANCH}\`."
+          gh pr create --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$BODY"
+          # Alguns repos só permitem squash/rebase; tentamos merge normal primeiro.
+          if gh pr merge --merge --delete-branch; then
+            echo "PR fundido com merge commit."
+          elif gh pr merge --squash --delete-branch; then
+            echo "PR fundido com squash (merge commits desativados no repo)."
+          elif gh pr merge --rebase --delete-branch; then
+            echo "PR fundido com rebase."
+          else
+            echo "::error::Não foi possível fundir o PR. Confira em Settings → General → Pull Requests os tipos de merge permitidos e as regras da branch \`${BASE_BRANCH}\`. Em Actions → General, ative \"Read and write\" e \"Allow GitHub Actions to create and approve pull requests\"."
+            exit 1
           fi
 
       - name: Resumo da execucao
@@ -128,7 +166,7 @@ jobs:
           echo "| Métrica | Valor |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Período | **${SLOT}** |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commits enviados para \`main\` | **${C}** |" >> $GITHUB_STEP_SUMMARY
-          echo "| Slots ignorados (sem diff vs \`main\`) | **${S}** |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commits no PR | **${C}** |" >> $GITHUB_STEP_SUMMARY
+          echo "| Slots ignorados (sem diff) | **${S}** |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Historico: https://github.com/${GITHUB_REPOSITORY}/commits/main" >> $GITHUB_STEP_SUMMARY
+          echo "Historico: https://github.com/${GITHUB_REPOSITORY}/commits/${BASE_BRANCH}" >> $GITHUB_STEP_SUMMARY

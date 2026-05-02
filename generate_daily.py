@@ -37,6 +37,18 @@ def sign(n):
 def square(n):
     return n * n
 ''',
+    '''# snippet do dia
+def triple(x):
+    return x * 3
+''',
+    '''# snippet do dia
+def negate(x):
+    return -x
+''',
+    '''# snippet do dia
+def abs_val(x):
+    return x if x >= 0 else -x
+''',
 ]
 
 
@@ -50,11 +62,11 @@ def _ci_footer() -> str:
     return f"\n\n# ci: workflow_run={rid}{extra}\n"
 
 
-# Índices por período (total 7 commits/dia): manhã 1–3, tarde 4–6, noite 7
+# Índices por período (total 10 commits/dia): manhã 1–3, tarde 4–6, noite 7–10
 SLOT_INDICES: dict[str, tuple[int, ...]] = {
     "morning": (1, 2, 3),
     "afternoon": (4, 5, 6),
-    "evening": (7,),
+    "evening": (7, 8, 9, 10),
 }
 
 
@@ -63,14 +75,14 @@ def main() -> None:
     p.add_argument(
         "--count",
         type=int,
-        default=int(os.environ.get("COMMITS_PER_DAY", "7")),
-        help="Quantidade de arquivos (commits) para hoje (default: 7 ou COMMITS_PER_DAY); ignorado se --slot for usado",
+        default=int(os.environ.get("COMMITS_PER_DAY", "10")),
+        help="Quantidade de arquivos (commits) para hoje (default: 10 ou COMMITS_PER_DAY); ignorado se --slot for usado",
     )
     p.add_argument(
         "--slot",
         choices=("morning", "afternoon", "evening"),
         default=os.environ.get("COMMIT_SLOT") or None,
-        help="Gera só os ficheiros desse período (1–3, 4–6 ou 7); prioridade sobre --count",
+        help="Gera só os ficheiros desse período (1–3, 4–6 ou 7–10); prioridade sobre --count",
     )
     args = p.parse_args()
 
