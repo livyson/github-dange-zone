@@ -4,6 +4,8 @@
 # Read and write, e ativar "Allow GitHub Actions to create and approve pull requests".
 # Se o org/repo não permitir, crie o secret GH_PR_TOKEN (PAT com repo ou fine-grained:
 # Contents + Pull requests neste repositório); o job usa-o no gh pr create/merge.
+# Reexecutar um run antigo em Actions usa o workflow do commit desse run, não o main atual.
+# Para testar o YAML novo: Actions → este workflow → "Run workflow" (ou push em main).
 name: Daily Code Commits
 
 on:
@@ -88,8 +90,8 @@ jobs:
           git fetch origin "$BASE_BRANCH"
           git checkout "$BASE_BRANCH"
           git pull origin "$BASE_BRANCH" --rebase=false || true
-          # run_attempt incrementa em cada reexecução; só run_id repetido causa push non-fast-forward.
-          BRANCH="bot/daily-${DATE_US}-${COMMIT_SLOT}-${{ github.run_id }}-${{ github.run_attempt }}"
+          # GITHUB_RUN_ATTEMPT incrementa em cada reexecução do mesmo run (evita push non-fast-forward).
+          BRANCH="bot/daily-${DATE_US}-${COMMIT_SLOT}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           git checkout -b "$BRANCH"
           echo "PR_BRANCH=$BRANCH" >> "$GITHUB_ENV"
           echo "Ramo do PR: $BRANCH (base: $BASE_BRANCH)"
