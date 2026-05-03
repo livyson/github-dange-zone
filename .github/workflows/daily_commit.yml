@@ -1,8 +1,8 @@
 # 10 commits/dia (manhã 1–3, tarde 4–6, noite 7–10), 3 execuções agendadas.
 # Cada execução: ramo → commits → PR → merge em main (fecha o PR).
-# PRs com GITHUB_TOKEN (recomendado): Settings → Actions → General → Read and write e
-# "Allow GitHub Actions to create and approve pull requests". O gh usa GITHUB_TOKEN por defeito.
-# PAT (GH_PR_TOKEN) só se criares a variável Actions GH_CLI_USE_PAT=true (Settings → Secrets and variables → Actions → Variables); PAT inválido no secret sem esta variável já não bloqueia o fluxo.
+# Preferência: PR com gh (GITHUB_TOKEN + Actions → permitir PRs, ou GH_CLI_USE_PAT=true + GH_PR_TOKEN).
+# Se gh pr create falhar, o job tenta merge direto em BASE_BRANCH com git (só contents: write).
+# Para proibir esse fallback (ex.: política interna): variable DAILY_DISABLE_GIT_MERGE_FALLBACK=true.
 # Reexecutar um run antigo em Actions usa o workflow do commit desse run, não o main atual.
 # Para testar o YAML novo: Actions → este workflow → "Run workflow" (ou push em main).
 name: Daily Code Commits
@@ -103,6 +103,7 @@ jobs:
           # Só usa PAT se GH_CLI_USE_PAT=true (repo variable); senão GITHUB_TOKEN (evita PAT mal configurado a sombrear o token da Action).
           GH_TOKEN: ${{ vars.GH_CLI_USE_PAT == 'true' && secrets.GH_PR_TOKEN || secrets.GITHUB_TOKEN }}
           GH_PROMPT_DISABLED: "1"
+          DAILY_DISABLE_GIT_MERGE_FALLBACK: ${{ vars.DAILY_DISABLE_GIT_MERGE_FALLBACK }}
         run: |
           set -e
           DATE=$(date +%Y-%m-%d)
@@ -146,20 +147,35 @@ jobs:
           git push -u origin "$BRANCH"
           TITLE="daily: ${DATE} (${COMMIT_SLOT}, commits $(echo $INDICES | tr ' ' ','))"
           BODY="Commits automáticos **#${TOTAL_DAY}** do dia (${COMMIT_SLOT}). Fecha após merge em \`${BASE_BRANCH}\`."
-          if ! gh pr create --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$BODY"; then
-            echo "::error::gh pr create falhou (createPullRequest). Com GITHUB_TOKEN: https://github.com/${GITHUB_REPOSITORY}/settings/actions → Read and write + \\\"Allow GitHub Actions to create and approve pull requests\\\". Com PAT: variable GH_CLI_USE_PAT=true + secret GH_PR_TOKEN (fine-grained: Contents + Pull requests write neste repo). Apague GH_PR_TOKEN ou defina GH_CLI_USE_PAT=false se o PAT estiver errado."
-            exit 1
-          fi
-          # Alguns repos só permitem squash/rebase; tentamos merge normal primeiro.
-          if gh pr merge --merge --delete-branch; then
-            echo "PR fundido com merge commit."
-          elif gh pr merge --squash --delete-branch; then
-            echo "PR fundido com squash (merge commits desativados no repo)."
-          elif gh pr merge --rebase --delete-branch; then
-            echo "PR fundido com rebase."
+          if gh pr create --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$BODY"; then
+            if gh pr merge --merge --delete-branch; then
+              echo "PR fundido com merge commit."
+            elif gh pr merge --squash --delete-branch; then
+              echo "PR fundido com squash (merge commits desativados no repo)."
+            elif gh pr merge --rebase --delete-branch; then
+              echo "PR fundido com rebase."
+            else
+              echo "::error::PR criado mas gh pr merge falhou. Confira tipos de merge e branch rules em \`${BASE_BRANCH}\`."
+              exit 1
+            fi
           else
-            echo "::error::Não foi possível fundir o PR. Confira merge/branch rules em \`${BASE_BRANCH}\` e permissões do token (GITHUB_TOKEN nas definições Actions, ou PAT se GH_CLI_USE_PAT=true)."
-            exit 1
+            if [ "${DAILY_DISABLE_GIT_MERGE_FALLBACK:-}" = "true" ]; then
+              echo "::error::gh pr create falhou e o fallback git está desativado (DAILY_DISABLE_GIT_MERGE_FALLBACK=true). Ajuste permissões/PAT ou remova essa variable."
+              exit 1
+            fi
+            echo "::notice::gh pr create falhou (API/token); a integrar em \`${BASE_BRANCH}\` com merge local (sem PR)."
+            git checkout "$BASE_BRANCH"
+            git pull origin "$BASE_BRANCH" --rebase=false || true
+            if ! git merge "$BRANCH" --no-ff -m "daily: merge ${BRANCH} (${COMMIT_SLOT})"; then
+              echo "::error::git merge falhou (conflitos com \`${BASE_BRANCH}\`?)."
+              exit 1
+            fi
+            if ! git push origin "$BASE_BRANCH"; then
+              echo "::error::git push de \`${BASE_BRANCH}\` falhou (branch protegida ou falta de permissão contents: write?)."
+              exit 1
+            fi
+            git push origin --delete "$BRANCH" || true
+            echo "Integrado em \`${BASE_BRANCH}\` via merge local."
           fi
 
       - name: Resumo da execucao
