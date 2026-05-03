@@ -88,7 +88,8 @@ jobs:
           git fetch origin "$BASE_BRANCH"
           git checkout "$BASE_BRANCH"
           git pull origin "$BASE_BRANCH" --rebase=false || true
-          BRANCH="bot/daily-${DATE_US}-${COMMIT_SLOT}-${{ github.run_id }}"
+          # run_attempt incrementa em cada reexecução; só run_id repetido causa push non-fast-forward.
+          BRANCH="bot/daily-${DATE_US}-${COMMIT_SLOT}-${{ github.run_id }}-${{ github.run_attempt }}"
           git checkout -b "$BRANCH"
           echo "PR_BRANCH=$BRANCH" >> "$GITHUB_ENV"
           echo "Ramo do PR: $BRANCH (base: $BASE_BRANCH)"
