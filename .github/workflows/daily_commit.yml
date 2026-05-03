@@ -147,7 +147,10 @@ jobs:
           git push -u origin "$BRANCH"
           TITLE="daily: ${DATE} (${COMMIT_SLOT}, commits $(echo $INDICES | tr ' ' ','))"
           BODY="Commits automáticos **#${TOTAL_DAY}** do dia (${COMMIT_SLOT}). Fecha após merge em \`${BASE_BRANCH}\`."
-          gh pr create --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$BODY"
+          if ! gh pr create --base "$BASE_BRANCH" --head "$BRANCH" --title "$TITLE" --body "$BODY"; then
+            echo "::error::gh pr create bloqueado pelo GitHub (createPullRequest). Abra https://github.com/${GITHUB_REPOSITORY}/settings/actions → Workflow permissions: Read and write; ative \\\"Allow GitHub Actions to create and approve pull requests\\\". Ou crie o secret GH_PR_TOKEN (PAT: classic repo / ou fine-grained Contents + Pull requests neste repo)."
+            exit 1
+          fi
           # Alguns repos só permitem squash/rebase; tentamos merge normal primeiro.
           if gh pr merge --merge --delete-branch; then
             echo "PR fundido com merge commit."
